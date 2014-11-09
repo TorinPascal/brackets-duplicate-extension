@@ -39,10 +39,20 @@ define(function (require, exports, module) {
 
     var MODULE_NAME                 = "Duplicate";
 
-    var MENU_CMD_DUPLICATE          = "project-menu.version";
+    var MENU_CMD_DUPLICATE          = "project-menu.duplicate";
+    var MENU_CMD_MARK               = "project-menu.mark";
+    var MENU_CMD_MOVE               = "project-menu.move";
+    var MENU_CMD_COPY               = "project-menu.copy";
     var MENU_ITEM_DUPLICATE         = "Duplicate";
+    var MENU_ITEM_MARK              = "Mark";
+    var MENU_ITEM_MOVE              = "Move to Here";
+    var MENU_ITEM_COPY              = "Copy to Here";
     
     var SUFFIX                      = " copy";
+    
+    var cmdDuplicate, cmdMark, cmdMove, cmdCopy;
+    
+    var markedItem = null;
 
     
     function showErrorMessage(msg) {
@@ -208,7 +218,7 @@ define(function (require, exports, module) {
     function addSuffix(filename, seq, isDir) {
         
         var ext = isDir ? "" : FileUtils.getSmartFileExtension(filename);
-        var sfx = seq > 0 ? (SUFFIX + " " + seq) : SUFFIX;
+        var sfx = seq < 0 ? "" : (seq > 0 ? (SUFFIX + " " + seq) : SUFFIX);
         
         if (ext === "") {
             filename += sfx;
@@ -219,7 +229,7 @@ define(function (require, exports, module) {
         return filename;
     }
 
-    function doDuplicate(commandData) {
+    function doDuplicate() {
         var src, dst;
         var selectedItem = ProjectManager.getSelectedItem();
         
@@ -250,14 +260,125 @@ define(function (require, exports, module) {
             });
         }
     }
+    
+    function doMark() {
+        var src, dst;
+        
+        markedItem = ProjectManager.getSelectedItem();
+        
+        //console.log("Marked : " + markedItem);
+        
+        itemMarked(true);
+    }
+    
+    function doMove() {
+        doCopyMove(true);
+    }
+    
+    function doCopy() {
+        doCopyMove(false);
+    }
+    
+    function doCopyMove(move) {
+        var src, dst, dstPath;
+        var selectedItem = ProjectManager.getSelectedItem();
+        
+        if (markedItem === null)
+            return;
+
+        // determine destination parent path
+        if (selectedItem._isDirectory) {
+            dstPath = selectedItem._path;
+        } else {
+            dstPath = selectedItem._parentPath;
+        }
+        
+        // determine new destination path
+        dst = canonicalizeDirectoryPath(dstPath) + markedItem._name;
+
+        src = markedItem._path;
+
+        //console.log("CopyMove Source : " + src);
+        //console.log("CopyMove Destination : " + dst);
+
+        if (markedItem._isDirectory) {
+            
+            findUniqueName(dst, -1, true, function (err, dstUnique) {
+                if (err === brackets.fs.NO_ERROR) {
+                    duplicateDirectory(dstUnique, src)
+                    .done(function (errCount) {
+                        // delete source if moving
+                        if (move) {
+                            ProjectManager.deleteItem(markedItem);
+                        }
+                    })
+                    .fail(function (err) {
+                        showErrorMessage("Unable to copy/move directory (err=" + err + ").");
+                    })
+                    .always(function (err) {
+                        // completed; clear mark
+                        markedItem = null;
+                        itemMarked(false);
+                    });
+                } else {
+                    showErrorMessage("Unable to duplicate directory (err=" + err + ").");
+                }
+            });
+
+        } else {
+            
+            findUniqueName(dst, -1, false, function (err, dstUnique) {
+                if (err === brackets.fs.NO_ERROR) {
+                    copyFile(dstUnique, src)
+                    .done(function (errCount) {
+                        // delete source if moving
+                        if (move) {
+                            //console.log("Moved - deleting [" + markedItem._path + "]");
+                            ProjectManager.deleteItem(markedItem);
+                        }
+                    })
+                    .fail(function (err) {
+                        showErrorMessage("Unable to copy/move file (err=" + err + ").");
+                    })
+                    .always(function (err) {
+                        // completed; clear mark
+                        markedItem = null;
+                        itemMarked(false);
+                    });
+                } else {
+                    showErrorMessage("Unable to copy/move file (err=" + err + ").");
+                }
+            });
+            
+        }
+    }
+    
+    function itemMarked(marked) {
+        cmdMove.setEnabled(marked);
+        cmdCopy.setEnabled(marked);
+    }
 
     // Initialize extension once shell is finished initializing.
     AppInit.appReady(function () {
         
         // Add to project context menu
-        CommandManager.register(MENU_ITEM_DUPLICATE, MENU_CMD_DUPLICATE, doDuplicate);
+        cmdDuplicate = CommandManager.register(MENU_ITEM_DUPLICATE, MENU_CMD_DUPLICATE, doDuplicate);
+        cmdMark = CommandManager.register(MENU_ITEM_MARK, MENU_CMD_MARK, doMark);
+        cmdMove = CommandManager.register(MENU_ITEM_MOVE, MENU_CMD_MOVE, doMove);
+        cmdCopy = CommandManager.register(MENU_ITEM_COPY, MENU_CMD_COPY, doCopy);
+        
         var menu = Menus.getContextMenu(Menus.ContextMenuIds.PROJECT_MENU);
+
         menu.addMenuItem(MENU_CMD_DUPLICATE);
+        menu.addMenuItem(MENU_CMD_MARK);
+        menu.addMenuItem(MENU_CMD_MOVE);
+        menu.addMenuItem(MENU_CMD_COPY);
+        
+        markedItem = null;
+        itemMarked(false);
+        
+        // dump all registered commands
+        //console.log(JSON.stringify(CommandManager.getAll()));
         
     });
     
